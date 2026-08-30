@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build translated README files from the canonical English README.
 
-The README is mostly structure: a banner, badges, a 523-row lesson table, and
+The README is mostly structure: a banner, badges, the full lesson table, and
 HTML blocks. Only prose and headings are translated; every other byte is kept
 exactly, so a translation can never break the layout, the lesson table, or a
 link. The generator works by replacing only the translated line-spans in a copy
