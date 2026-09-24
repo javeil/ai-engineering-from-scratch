@@ -182,6 +182,7 @@ mx-tool-call-loop
 构建一个存储工具定义及其实现的注册表。每个工具包含一个 JSON Schema 定义（模型看到的）和一个 Python 函数（你的代码执行的）。
 
 ```python
+import ast
 import json
 import math
 import time
@@ -290,10 +291,18 @@ def read_file(path):
 def run_code(code, language="python"):
     if language != "python":
         return {"error": True, "message": f"Language '{language}' not supported. Only 'python' is available."}
-    forbidden = ["import os", "import sys", "import subprocess", "exec(", "eval(", "__import__", "open("]
-    for pattern in forbidden:
-        if pattern in code:
-            return {"error": True, "message": f"Forbidden operation: {pattern}", "code": "SECURITY_VIOLATION"}
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return {"error": True, "message": f"SyntaxError: {e}", "code": "SYNTAX_ERROR"}
+    unsafe_names = {"exec", "eval", "compile", "__import__", "open", "globals", "locals", "vars", "getattr", "setattr", "delattr"}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return {"error": True, "message": "Forbidden operation: import is not allowed", "code": "SECURITY_VIOLATION"}
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__") and node.attr.endswith("__"):
+            return {"error": True, "message": "Forbidden operation: dunder attribute access is not allowed", "code": "SECURITY_VIOLATION"}
+        if isinstance(node, ast.Name) and node.id in unsafe_names:
+            return {"error": True, "message": f"Forbidden operation: {node.id} is not allowed", "code": "SECURITY_VIOLATION"}
     try:
         local_vars = {}
         exec(code, {"__builtins__": {"print": print, "range": range, "len": len, "str": str, "int": int, "float": float, "list": list, "dict": dict, "sum": sum, "min": min, "max": max, "abs": abs, "round": round, "sorted": sorted, "enumerate": enumerate, "zip": zip, "map": map, "filter": filter, "math": math}}, local_vars)
@@ -302,6 +311,8 @@ def run_code(code, language="python"):
     except Exception as e:
         return {"error": True, "message": f"{type(e).__name__}: {e}"}
 ```
+
+按字符串过滤只是把代码当作文本检查，凡是没有逐字匹配黑名单的写法都可能漏掉。将代码解析为抽象语法树并遍历节点，就可以根据结构拒绝 `import` 语句、双下划线属性访问（例如通过 `__class__` 和 `__globals__` 触及真实解释器的路径），以及不安全的内置函数名。不过，这只能作为教学用过滤器，不能当作真正的安全边界。进程内的检查器与被执行代码共享解释器，执意绕过限制的调用者仍可能找到可访问的对象。生产系统应在独立进程或容器中运行不可信代码，例如降权的子进程、gVisor、Firecracker 或托管代码运行器。这样即使发生逃逸，攻击者进入的也是可丢弃的隔离环境，而不是你的服务。
 
 ### 第 3 步：注册所有工具
 
@@ -328,7 +339,7 @@ def register_all_tools():
         read_file,
     )
     register_tool(
-        "run_code", "Execute Python code in a sandboxed environment. Set a 'result' variable to return output.",
+        "run_code", "Run a small Python snippet behind a static-analysis guard and a restricted interpreter. This is a teaching filter, not real isolation. Set a 'result' variable to return output.",
         {"type": "object", "properties": {"code": {"type": "string", "description": "Python code to execute"}, "language": {"type": "string", "enum": ["python"], "description": "Programming language"}}, "required": ["code"]},
         run_code,
     )

@@ -438,22 +438,20 @@ def tree_of_thought_solve(question, client, model, breadth=3, depth=3):
 
 ```python
 def solve_with_escalation(question, examples, client, model):
-    system, user = build_cot_prompt(question, examples)
-    single_response = call_llm(client, model, system, user, temperature=0.0)
-    single_answer = extract_answer(single_response)
+    single_answer, _ = few_shot_cot_solve(question, examples, client, model)
 
     sc_answer, confidence, _, _ = self_consistency_solve(
         question, examples, client, model, n_samples=5
     )
 
-    if confidence >= 0.8:
+    if confidence >= 0.8 and single_answer == sc_answer:
         return sc_answer, "self_consistency", confidence
 
     tot_answer, _ = tree_of_thought_solve(question, client, model)
     return tot_answer, "tree_of_thought", None
 ```
 
-升级逻辑：先尝试便宜的(单条思维链)。如果自一致性的置信度低于 0.8(5 个样本中少于 4 个一致)，则升级到思维树。这在成本和准确率之间取得平衡——大多数问题被低成本解决，难题获得更多计算。
+升级逻辑：先尝试成本较低的单条思维链。单次确定性推理没有投票比例，因此用结果是否一致来检查质量：温度为 0 的答案必须与多次采样路径中的多数答案相同。如果两者不一致，或者自一致性的置信度低于 0.8（5 个样本中少于 4 个一致），就升级到思维树。这在成本和准确率之间取得平衡：多数问题能以较低成本解决，难题则获得更多计算资源。
 
 ## 实际使用
 
